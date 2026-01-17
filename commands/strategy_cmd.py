@@ -23,7 +23,7 @@ def generate_channel_state(ctx, metrics, top_videos):
     winning_format = "Loop" 
     
     # Generate Prompt for LLM Analysis
-    top_video_titles = [f"- {v.get('videoTitle', 'Unknown')} ({v.get('views', 0)} views)" for v in top_videos[:5]]
+    top_video_titles = [f"- {v.get('videoTitle', 'Unknown')} ({v.get('views', 0)} views, {v.get('likes', 0)} likes)" for v in top_videos[:5]]
     top_videos_str = "\n".join(top_video_titles)
     
     prompt = f"""
@@ -56,7 +56,7 @@ Last Updated: {datetime.now().strftime('%Y-%m-%d %H:%M')}
 ## Top Performers
 """
     for v in top_videos[:3]:
-        content += f"- **{v.get('videoTitle', 'Unknown')}** ({v.get('views', 0):,} views) - {v.get('averageViewDuration', 0):.1f}s retention\n"
+        content += f"- **{v.get('videoTitle', 'Unknown')}** ({v.get('views', 0):,} views, {v.get('likes', 0):,} likes) - {v.get('averageViewDuration', 0):.1f}s retention\n"
 
     content += f"""
 ## AI Analysis
