@@ -1,0 +1,34 @@
+# ContentOS .gitignore
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.Python
+*.so
+
+# Virtual environment
+venv/
+.venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# Credentials (NEVER commit)
+credentials/*.json
+credentials/*.pickle
+*.pickle
+
+# User-specific state
+.contentos/config.json
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temp files
+*.log
+*.tmp

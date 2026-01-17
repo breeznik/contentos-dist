@@ -1,0 +1,18 @@
+# ContentOS Dependencies
+
+# Core
+pyyaml>=6.0
+
+# YouTube API
+google-api-python-client>=2.0.0
+google-auth-httplib2>=0.1.0
+google-auth-oauthlib>=0.5.0
+
+# Database
+# (sqlite3 is built-in)
+
+# Optional: LLM integration (Ollama)
+# ollama  # Install separately: pip install ollama
+
+# Optional: Rich terminal output
+# rich>=13.0.0
