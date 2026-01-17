@@ -7,7 +7,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from core.context import context_manager
 from core.ledger import get_next_project_id, list_production_kits
 from core.templates import create_kit_files
-from core.brain import brain_exists, get_prompt_context, init_brain
+from core.brain import brain_exists, get_prompt_context, init_brain, list_themes
 
 def cmd_create(args):
     """Create a new production kit."""
@@ -16,6 +16,34 @@ def cmd_create(args):
         print("No active channel. Run: contentos channel use <name>")
         return
     
+    # --- Theme Selection ---
+    if args.theme is None:
+        if brain_exists(ctx):
+            themes = list_themes(ctx)
+            if themes:
+                print(f"\nSelect Theme for '{args.name}':")
+                for i, t in enumerate(themes):
+                    print(f"  [{i+1}] {t}")
+                
+                try:
+                    selection = input(f"\nEnter number (default 1): ").strip()
+                    if not selection:
+                        args.theme = themes[0]
+                    else:
+                        idx = int(selection) - 1
+                        if 0 <= idx < len(themes):
+                            args.theme = themes[idx]
+                        else:
+                            print("Invalid selection. Using default.")
+                            args.theme = themes[0]
+                except ValueError:
+                    print("Invalid input. Using default.")
+                    args.theme = themes[0]
+            else:
+                args.theme = "loop"
+        else:
+            args.theme = "loop"
+
     project_id = get_next_project_id(ctx)
     folder_name = f"{project_id}_{args.name.lower().replace(' ', '_')}"
     kit_path = ctx.production_path / folder_name
@@ -45,14 +73,15 @@ def cmd_create(args):
     if not is_wildcard:
         # --- BRAIN INTEGRATION (Replaces legacy strategy loading) ---
         if brain_exists(ctx):
-            brain_context = get_prompt_context(ctx)
+            # Pass the selected theme to ensure correct context is loaded
+            brain_context = get_prompt_context(ctx, theme_override=args.theme)
             strategy_text += brain_context
-            print(f"Injected Channel Brain context (active theme from brain/themes/)")
+            print(f"Injected Channel Brain context (Theme: {args.theme})")
         else:
             # Fallback: Initialize brain if not exists
             print("Brain not found. Initializing...")
             init_brain(ctx)
-            brain_context = get_prompt_context(ctx)
+            brain_context = get_prompt_context(ctx, theme_override=args.theme)
             strategy_text += brain_context
             print(f"Brain initialized and context injected.")
 

@@ -327,13 +327,24 @@ def set_active_theme(ctx, theme_name: str) -> bool:
     state['active_theme'] = theme_name
     return save_state(ctx, state)
 
-def get_prompt_context(ctx) -> str:
+def get_prompt_context(ctx, theme_override: str = None) -> str:
     """
     Generate the full prompt context from brain for kit creation.
     This is injected into kit prompts.
     """
     state = load_state(ctx)
-    playbook = load_playbook(ctx)
+    
+    # Use override if provided, otherwise active theme, otherwise loop fallback
+    target_theme = theme_override or state.get('active_theme', 'loop')
+    
+    # Load specific theme file
+    theme_path = get_themes_path(ctx) / f"{target_theme}.md"
+    if theme_path.exists():
+        with open(theme_path, 'r', encoding='utf-8') as f:
+            playbook = f.read()
+    else:
+        playbook = load_playbook(ctx) # Fallback to active theme logic
+        
     learnings = load_learnings(ctx)
     
     # Extract identity

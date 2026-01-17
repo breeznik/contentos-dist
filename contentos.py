@@ -148,8 +148,7 @@ def main() -> None:
     kit_create = kit_subparsers.add_parser('create', help='Create a new kit')
     kit_create.add_argument('name', type=str, help='Kit name')
     kit_create.add_argument('--theme', '-t', type=str, 
-                            choices=['loop', 'cinematic', 'voxel'], 
-                            default='loop', help='Theme')
+                            default=None, help='Theme (default: interactive selection)')
     kit_create.add_argument('--formula', '-f', type=str,
                             choices=['stitch_2clip', 'loop_circular', 'loop_boomerang', 'cinematic_4shot', 'fpp_narrative', 'fpp_short'],
                             default='stitch_2clip', help='Production Formula')
