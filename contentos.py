@@ -113,6 +113,8 @@ def main() -> None:
 
     # --- Sync Command ---
     sync_parser = subparsers.add_parser('sync', help='Sync analytics for active channel')
+    sync_parser.add_argument('--deep', action='store_true', help='Deep sync (50 videos)')
+    sync_parser.add_argument('--count', type=int, help='Specific number of videos to fetch')
     sync_parser.add_argument('--auto-dna', '-a', action='store_true', 
                             help='Auto-update viral_dna.md after sync')
     sync_parser.add_argument('--all', dest='all_channels', action='store_true',

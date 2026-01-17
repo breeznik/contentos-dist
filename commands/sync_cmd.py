@@ -25,30 +25,47 @@ def get_channel_uploads(youtube):
 def get_video_stats(youtube, playlist_id, max_results=10):
     """Fetches video IDs from playlist and their statistics."""
     videos = []
-    request = youtube.playlistItems().list(
-        part="snippet",
-        playlistId=playlist_id,
-        maxResults=max_results
-    )
-    response = request.execute()
+    next_page_token = None
     
-    video_ids = [item["snippet"]["resourceId"]["videoId"] for item in response.get("items", [])]
-    
-    if video_ids:
-        stats_request = youtube.videos().list(
-            part="snippet,statistics",
-            id=",".join(video_ids)
+    while True:
+        # Calculate how many to fetch in this page (max 50 per page API limit)
+        page_size = min(50, max_results - len(videos))
+        if page_size <= 0:
+            break
+
+        request = youtube.playlistItems().list(
+            part="snippet",
+            playlistId=playlist_id,
+            maxResults=page_size,
+            pageToken=next_page_token
         )
-        stats_response = stats_request.execute()
+        response = request.execute()
         
-        for item in stats_response.get("items", []):
-            videos.append({
-                "id": item["id"],
-                "title": item["snippet"]["title"][:40],
-                "views": int(item["statistics"].get("viewCount", 0)),
-                "likes": int(item["statistics"].get("likeCount", 0)),
-                "published_at": item["snippet"]["publishedAt"]
-            })
+        items = response.get("items", [])
+        if not items:
+            break
+            
+        video_ids = [item["snippet"]["resourceId"]["videoId"] for item in items]
+        
+        if video_ids:
+            stats_request = youtube.videos().list(
+                part="snippet,statistics",
+                id=",".join(video_ids)
+            )
+            stats_response = stats_request.execute()
+            
+            for item in stats_response.get("items", []):
+                videos.append({
+                    "id": item["id"],
+                    "title": item["snippet"]["title"][:40],
+                    "views": int(item["statistics"].get("viewCount", 0)),
+                    "likes": int(item["statistics"].get("likeCount", 0)),
+                    "published_at": item["snippet"]["publishedAt"]
+                })
+        
+        next_page_token = response.get("nextPageToken")
+        if not next_page_token:
+            break
     
     return videos
 
@@ -66,6 +83,8 @@ def run(args):
                 # Recursive call without the --all flag
                 class SingleArgs:
                     auto_dna = getattr(args, 'auto_dna', False)
+                    deep = getattr(args, 'deep', False)
+                    count = getattr(args, 'count', None)
                     all_channels = False
                 run(SingleArgs())
         print("\n>> GLOBAL SYNC COMPLETE.")
@@ -87,7 +106,15 @@ def run(args):
             print("[!] Could not find channel uploads.")
             return
         
-        videos = get_video_stats(youtube, playlist_id)
+        # Determine fetch count
+        count = 10
+        if hasattr(args, 'deep') and args.deep:
+            count = 50
+        if hasattr(args, 'count') and args.count:
+            count = args.count
+            
+        print(f"   Fetching last {count} videos...")
+        videos = get_video_stats(youtube, playlist_id, max_results=count)
         print(f"   Found {len(videos)} videos")
         
         for v in videos:

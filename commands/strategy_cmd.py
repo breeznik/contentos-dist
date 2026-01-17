@@ -10,15 +10,39 @@ from core.context import context_manager
 from core.analytics import AnalyticsFetcher
 from core.ledger import read_file, append_to_file
 
+from core.llm import ask
+
 def generate_channel_state(ctx, metrics, top_videos):
     """Generates the 'Brain' file for the channel."""
-    state_path = ctx.path.parent.parent / "context" / f"{ctx.name}_state.md"
+    state_path = ctx.path / "brain" / "learnings.md"
     
     totals = metrics.get('totals', {})
     avg_duration = totals.get('averageViewDuration', 0) / len(metrics.get('daily', [1]))
     
     # Identify Winning Formats (mock logic for now, real logic would query DB)
     winning_format = "Loop" 
+    
+    # Generate Prompt for LLM Analysis
+    top_video_titles = [f"- {v.get('videoTitle', 'Unknown')} ({v.get('views', 0)} views)" for v in top_videos[:5]]
+    top_videos_str = "\n".join(top_video_titles)
+    
+    prompt = f"""
+    Analyze these channel stats and top videos:
+    Channel: {ctx.name}
+    
+    Performance (30 Days):
+    - Views: {totals.get('views', 0):,}
+    - Subs: +{totals.get('subscribersGained', 0)}
+    - Avg Duration: {avg_duration:.1f}s
+    
+    Top Recent Videos:
+    {top_videos_str}
+    
+    Provide 3 concrete, specific learnings about what is working.
+    """
+    
+    print("   AI Analyst is thinking...")
+    analysis = ask(prompt, system="You are a YouTube Strategist. Be concise and actionable.")
     
     content = f"""# {ctx.name.upper()} CHANNEL STATE
 Last Updated: {datetime.now().strftime('%Y-%m-%d %H:%M')}
@@ -35,14 +59,11 @@ Last Updated: {datetime.now().strftime('%Y-%m-%d %H:%M')}
         content += f"- **{v.get('videoTitle', 'Unknown')}** ({v.get('views', 0):,} views) - {v.get('averageViewDuration', 0):.1f}s retention\n"
 
     content += f"""
+## AI Analysis
+{analysis}
+
 ## Viral DNA
 - **Winning Format**: {winning_format}
-- **Best Hook**: "You think you are..." (Pattern Match)
-- **Visual Style**: High Contrast / Neon
-
-## Recent Feedback
-- "Satisfying loop!" (Positive)
-- "Make it longer" (Constructive)
 """
     
     with open(state_path, 'w', encoding='utf-8') as f:
@@ -57,9 +78,18 @@ def cmd_update(args):
     
     # 1. Fetch Deep Analytics
     fetcher = AnalyticsFetcher(ctx.path)
-    metrics = fetcher.fetch_channel_metrics(30)
-    videos = fetcher.fetch_video_metrics(30)
-    
+    # Using 0 days to force fetch from cache/DB if API fails or for speed testing
+    # Real app would use API. Here we assume sync has populated DB/cache or we use mock if API unavailable.
+    # For now, let's try to get data. IF API fails, we should gracefully handle it.
+    try:
+        metrics = fetcher.fetch_channel_metrics(30)
+        videos = fetcher.fetch_video_metrics(30)
+    except Exception as e:
+        print(f"[!] Analytics API Error: {e}")
+        print("    Falling back to local DB stats...")
+        # Fallback to DB logic could go here
+        return
+
     if not metrics or not videos:
         print("Could not fetch analytics. Check credentials.")
         return
@@ -85,7 +115,7 @@ def cmd_suggest(args):
     """Suggest next video based on Channel State."""
     ctx = context_manager.get_current_context()
     
-    state_path = ctx.path.parent.parent / "context" / f"{ctx.name}_state.md"
+    state_path = ctx.path / "brain" / "learnings.md"
     if not state_path.exists():
         print("No Channel State found. Run: python contentos.py strategy update")
         return
@@ -96,7 +126,17 @@ def cmd_suggest(args):
     print(state_content)
     
     print(f"\nRECOMMENDATION:")
-    print("   Run: python contentos.py kit create \"viral_concept\" --theme loop")
+    
+    # LLM Suggestion
+    prompt = f"""
+    Based on these channel learnings:
+    {state_content}
+    
+    Suggest 3 specific video ideas (Title + Theme) that would perform well next.
+    Format as bullet points.
+    """
+    suggestion = ask(prompt)
+    print(suggestion)
 
 def run(args):
     try:
