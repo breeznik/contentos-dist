@@ -189,7 +189,21 @@ def run(args):
                     data['performance']['likes'] = matched_video['likes']
                     data['performance']['synced_at'] = matched_video['published_at'][:10] # Just the date
                     data['status'] = 'published'
+                
+                # Also try to match video_id_short
+                matched_short = None
+                if data.get('video_id_short'):
+                    matched_short = next((v for v in videos if v['id'] == data['video_id_short']), None)
+                
+                if matched_short:
+                    if 'performance_short' not in data or data['performance_short'] is None:
+                        data['performance_short'] = {}
+                    
+                    data['performance_short']['views_7d'] = matched_short['views']
+                    data['performance_short']['likes'] = matched_short['likes']
+                    data['performance_short']['synced_at'] = matched_short['published_at'][:10]
 
+                if matched_video or matched_short:
                     with open(yaml_path, 'w', encoding='utf-8') as f:
                         yaml.dump(data, f, default_flow_style=False)
                     updated_kits += 1

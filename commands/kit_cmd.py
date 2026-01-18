@@ -290,13 +290,20 @@ def cmd_link(args):
             with open(yaml_path, 'r', encoding='utf-8') as f:
                 kit_data = yaml.safe_load(f)
             
-            kit_data['video_id'] = target_video_id
+            # Support --short flag for Shorts vs Video linking
+            is_short = hasattr(args, 'short') and args.short
+            if is_short:
+                kit_data['video_id_short'] = target_video_id
+                print(f"Linked {kit['name']} (SHORT) -> {target_video_id}")
+            else:
+                kit_data['video_id'] = target_video_id
+                print(f"Linked {kit['name']} (VIDEO) -> {target_video_id}")
+            
             kit_data['status'] = 'published'
             
             with open(yaml_path, 'w', encoding='utf-8') as f:
                 yaml.dump(kit_data, f, default_flow_style=False, allow_unicode=True)
             
-            print(f"Linked {kit['name']} -> {target_video_id}")
             return
         
         # Show available videos
@@ -318,19 +325,25 @@ def cmd_link(args):
                     kit_data = yaml.safe_load(f) or {}
                 
                 vid = kit_data.get('video_id') or 'TBD'
-                if vid == 'TBD':
-                    print(f"  [{kit['id']}] {kit['name']} → needs video_id")
+                vid_short = kit_data.get('video_id_short') or 'TBD'
+                
+                if vid == 'TBD' and vid_short == 'TBD':
+                    print(f"  [{kit['id']}] {kit['name']} → needs linking")
                     unlinked.append(kit)
                 else:
-                    print(f"  [{kit['id']}] {kit['name']} -> {vid[:11]}")
+                    vid_display = vid[:11] if vid != 'TBD' else '---'
+                    short_display = vid_short[:11] if vid_short != 'TBD' else '---'
+                    print(f"  [{kit['id']}] {kit['name']} -> V:{vid_display} | S:{short_display}")
         
         if unlinked and videos:
             print(f"\nTo link manually:")
-            print(f"   python contentos.py kit link --video <VIDEO_ID> --kit <KIT_ID>")
+            print(f"   Video:  python contentos.py kit link --video <VIDEO_ID> --kit <KIT_ID>")
+            print(f"   Short:  python contentos.py kit link --video <VIDEO_ID> --kit <KIT_ID> --short")
             print(f"\n   Example: python contentos.py kit link --video {videos[0]['id']} --kit {unlinked[0]['id']}")
         elif unlinked:
             print(f"\nTo link manually:")
-            print(f"   python contentos.py kit link --video <VIDEO_ID> --kit <KIT_ID>")
+            print(f"   Video:  python contentos.py kit link --video <VIDEO_ID> --kit <KIT_ID>")
+            print(f"   Short:  python contentos.py kit link --video <VIDEO_ID> --kit <KIT_ID> --short")
         else:
             print(f"\nLinked {linked} videos to kits")
         
@@ -378,6 +391,214 @@ def cmd_link(args):
     except Exception as e:
         print(f"Error: {e}")
 
+def cmd_enrich(args):
+    """Use LLM to extract DNA ingredients from prompt.txt and update kit.yaml."""
+    import yaml
+    import json
+    import re
+    from core.llm import ask, ensure_ollama_running
+    
+    ctx = context_manager.get_current_context()
+    if not ctx:
+        print("No active channel. Run: contentos channel use <name>")
+        return
+    
+    # Ensure LLM is available (auto-starts Ollama if needed)
+    llm_available = ensure_ollama_running()
+    if not llm_available:
+        print("[!] LLM not available. Using pattern-based extraction.")
+    
+    kits = list_production_kits(ctx)
+    
+    # If specific kit ID provided, only process that one
+    if hasattr(args, 'kit_id') and args.kit_id:
+        kits = [k for k in kits if k['id'] == args.kit_id]
+        if not kits:
+            print(f"Kit {args.kit_id} not found")
+            return
+    
+    enriched_count = 0
+    
+    for kit in kits:
+        kit_path = ctx.production_path / f"{kit['id']}_{kit['name']}"
+        prompt_path = kit_path / "prompt.txt"
+        yaml_path = kit_path / "kit.yaml"
+        
+        if not prompt_path.exists():
+            continue
+        
+        if not yaml_path.exists():
+            print(f"[!] {kit['id']} has no kit.yaml, skipping")
+            continue
+        
+        # Read prompt
+        with open(prompt_path, 'r', encoding='utf-8') as f:
+            prompt_content = f.read()
+        
+        # Read current kit.yaml
+        with open(yaml_path, 'r', encoding='utf-8') as f:
+            kit_data = yaml.safe_load(f) or {}
+        
+        # Check if already enriched
+        ingredients = kit_data.get('ingredients', {})
+        if ingredients.get('hook_type') and ingredients.get('audio_style'):
+            if not (hasattr(args, 'force') and args.force):
+                print(f"[✓] {kit['id']} already enriched, skipping (use --force to re-analyze)")
+                continue
+        
+        print(f"[*] Analyzing {kit['id']}_{kit['name']}...")
+        
+        extracted = None
+        
+        # Try LLM first if available
+        if llm_available:
+            extraction_prompt = f"""Analyze this video production prompt and extract the DNA ingredients.
+
+PROMPT CONTENT:
+{prompt_content[:3000]}
+
+Extract these ingredients as a JSON object:
+{{
+    "hook_type": "<one of: POV_Emotional, POV_Relatable, Question, Statement, Confrontational, Silent, Tutorial>",
+    "audio_style": "<one of: ASMR_Purr, Ambient_Silence, Music_Emotional, Music_Upbeat, SFX_Heavy, Voiceover>",
+    "visual_style": "<one of: Macro_Closeup, Wide_Establishing, POV_FirstPerson, Handheld_Raw, Cinematic_Smooth, Loop_Seamless>",
+    "physics_type": "<one of: Organic_Motion, Rigid_Body, Fluid_Sim, Particle_FX, Static_Hold, None>",
+    "emotion": "<primary emotion: Trust, Love, Curiosity, Satisfaction, Nostalgia, FOMO, Humor>",
+    "duration_seconds": <number>,
+    "clip_count": <number>
+}}
+
+Return ONLY valid JSON, no explanation."""
+
+            try:
+                result = ask(extraction_prompt, 
+                            system="You are a content analyst. Extract structured data from video prompts. Return only valid JSON.",
+                            temperature=0.3,
+                            json_mode=True)
+                extracted = json.loads(result)
+            except:
+                print("   [!] LLM failed, falling back to pattern extraction")
+        
+        # Fallback: Pattern-based extraction
+        if not extracted:
+            extracted = _extract_patterns(prompt_content)
+            print("   (Using pattern-based extraction)")
+        
+        if extracted:
+            # Update ingredients in kit.yaml
+            if 'ingredients' not in kit_data:
+                kit_data['ingredients'] = {}
+            
+            kit_data['ingredients']['hook_type'] = extracted.get('hook_type', 'Unknown')
+            kit_data['ingredients']['audio_style'] = extracted.get('audio_style', 'Unknown')
+            kit_data['ingredients']['visual_style'] = extracted.get('visual_style', 'Unknown')
+            kit_data['ingredients']['physics_type'] = extracted.get('physics_type', 'None')
+            kit_data['ingredients']['emotion'] = extracted.get('emotion', 'Unknown')
+            kit_data['ingredients']['duration'] = extracted.get('duration_seconds', 16)
+            kit_data['ingredients']['clip_count'] = extracted.get('clip_count', 2)
+            
+            # Write updated kit.yaml
+            with open(yaml_path, 'w', encoding='utf-8') as f:
+                yaml.dump(kit_data, f, default_flow_style=False, allow_unicode=True)
+            
+            print(f"   ✓ Extracted: {extracted.get('hook_type')} + {extracted.get('emotion')} + {extracted.get('audio_style')}")
+            enriched_count += 1
+    
+    print(f"\n>> Enriched {enriched_count} kits with DNA ingredients.")
+    
+    if enriched_count > 0:
+        print(">> Syncing to database...")
+        from commands import db_cmd
+        db_cmd.cmd_sync(args)
+        
+        from core.ui import print_ai_hint
+        print_ai_hint([
+            "Analyze ingredient performance: python contentos.py db analyze",
+            "View updated kits: python contentos.py kit list"
+        ])
+
+def _extract_patterns(prompt_content: str) -> dict:
+    """Fallback pattern-based extraction when LLM is unavailable."""
+    import re
+    
+    content_lower = prompt_content.lower()
+    
+    # Hook Type Detection
+    hook_type = "Unknown"
+    if "pov" in content_lower or "pov:" in content_lower:
+        if any(w in content_lower for w in ["adopt", "chose", "love", "trust", "emotional"]):
+            hook_type = "POV_Emotional"
+        else:
+            hook_type = "POV_Relatable"
+    elif "?" in prompt_content[:200]:
+        hook_type = "Question"
+    elif "tutorial" in content_lower or "how to" in content_lower:
+        hook_type = "Tutorial"
+    
+    # Audio Style Detection
+    audio_style = "Ambient_Silence"
+    if "asmr" in content_lower or "purr" in content_lower:
+        audio_style = "ASMR_Purr"
+    elif "music" in content_lower:
+        audio_style = "Music_Emotional"
+    elif "voiceover" in content_lower or "narrator" in content_lower:
+        audio_style = "Voiceover"
+    
+    # Visual Style Detection
+    visual_style = "Handheld_Raw"
+    if "macro" in content_lower or "close-up" in content_lower or "closeup" in content_lower:
+        visual_style = "Macro_Closeup"
+    elif "pov" in content_lower or "first person" in content_lower:
+        visual_style = "POV_FirstPerson"
+    elif "loop" in content_lower or "seamless" in content_lower:
+        visual_style = "Loop_Seamless"
+    elif "cinematic" in content_lower:
+        visual_style = "Cinematic_Smooth"
+    elif "handheld" in content_lower or "home video" in content_lower:
+        visual_style = "Handheld_Raw"
+    
+    # Physics Type Detection
+    physics_type = "Organic_Motion"
+    if "rigid" in content_lower:
+        physics_type = "Rigid_Body"
+    elif "fluid" in content_lower or "water" in content_lower:
+        physics_type = "Fluid_Sim"
+    elif "particle" in content_lower:
+        physics_type = "Particle_FX"
+    elif "static" in content_lower:
+        physics_type = "Static_Hold"
+    
+    # Emotion Detection
+    emotion = "Trust"
+    emotion_map = {
+        "love": "Love", "trust": "Trust", "curious": "Curiosity",
+        "satisfy": "Satisfaction", "nostalg": "Nostalgia", 
+        "fomo": "FOMO", "humor": "Humor", "funny": "Humor",
+        "adopt": "Love", "emotional": "Love", "dream": "Curiosity"
+    }
+    for keyword, emo in emotion_map.items():
+        if keyword in content_lower:
+            emotion = emo
+            break
+    
+    # Duration Detection
+    duration_match = re.search(r'(\d+)\s*(?:second|sec|s\b)', content_lower)
+    duration = int(duration_match.group(1)) if duration_match else 16
+    
+    # Clip Count Detection
+    clip_match = re.search(r'(\d+)\s*(?:clip|scene|segment)', content_lower)
+    clip_count = int(clip_match.group(1)) if clip_match else 2
+    
+    return {
+        "hook_type": hook_type,
+        "audio_style": audio_style,
+        "visual_style": visual_style,
+        "physics_type": physics_type,
+        "emotion": emotion,
+        "duration_seconds": duration,
+        "clip_count": clip_count
+    }
+
 def run(args):
     """Main entry point for kit command."""
     if args.kit_action == 'create':
@@ -388,5 +609,7 @@ def run(args):
         cmd_publish(args)
     elif args.kit_action == 'link':
         cmd_link(args)
+    elif args.kit_action == 'enrich':
+        cmd_enrich(args)
     else:
-        print("Usage: contentos kit {create|list|publish|link}")
+        print("Usage: contentos kit {create|list|publish|link|enrich}")

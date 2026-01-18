@@ -26,6 +26,55 @@ def check_connection() -> bool:
     except:
         return False
 
+def ensure_ollama_running() -> bool:
+    """Ensures Ollama is running, starts it if not."""
+    import subprocess
+    import time
+    from core.context import context_manager
+    
+    if check_connection():
+        return True
+    
+    # Check feature flag
+    try:
+        config = context_manager.global_config
+        if not config.features.ollama_autostart:
+            print("[!] Ollama not running (Auto-start DISABLED in config)")
+            return False
+    except:
+        # Fallback if config can't be read
+        pass
+    
+    print("[*] Ollama not running. Attempting to start...")
+    
+    try:
+        # Try to start Ollama in background
+        # Windows: ollama serve runs the server
+        subprocess.Popen(
+            ["ollama", "serve"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, 'CREATE_NO_WINDOW') else 0
+        )
+        
+        # Wait for it to start (up to 10 seconds)
+        for i in range(10):
+            time.sleep(1)
+            if check_connection():
+                print("[✓] Ollama started successfully!")
+                return True
+            print(f"   Waiting... ({i+1}/10)")
+        
+        print("[!] Ollama failed to start within timeout")
+        return False
+        
+    except FileNotFoundError:
+        print("[!] Ollama not found. Install from https://ollama.ai")
+        return False
+    except Exception as e:
+        print(f"[!] Failed to start Ollama: {e}")
+        return False
+
 def list_models() -> List[str]:
     """Returns list of available local models."""
     try:

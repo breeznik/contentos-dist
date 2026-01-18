@@ -74,7 +74,7 @@ contentos channel status
 
 Switch channels:
 ```
-contentos channel use kathakids
+contentos channel use gaming_channel
 ```
 
 ### Themes
@@ -83,7 +83,7 @@ Each channel has themes (prompt formulas). View available:
 contentos brain show
 ```
 
-Current themes for rotnation:
+Current themes for gaming_channel:
 - `loop` - 16s seamless loops
 - `advice` - Corny cursed advice (30s)
 - `cinematic` - Micro-stories (30-60s)
@@ -129,7 +129,7 @@ Find them in: `channels/{name}/production/`
 ```
 content/
 ├── channels/
-│   └── rotnation/
+│   └── gaming_channel/
 │       ├── brain/           # AI knowledge
 │       │   ├── state.json   # Identity, metrics
 │       │   ├── themes/      # Prompt formulas
@@ -169,8 +169,11 @@ content/
 | Change theme | "Switch to loop theme" |
 | Research | "Scout videos about X" |
 | Analyze comments | "Scan our comments" |
-| Switch channel | "Switch to kathakids channel" |
+| Switch channel | "Switch to gaming_channel channel" |
 | List kits | "Show production kits" |
+| Enrich DNA | "Enrich kit X with DNA ingredients" |
+| Link Video (Long) | "Link video ID to kit X" |
+| Link Video (Short) | "Link short ID to kit X" |
 
 ---
 

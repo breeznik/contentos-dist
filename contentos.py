@@ -163,6 +163,11 @@ def main() -> None:
     kit_link = kit_subparsers.add_parser('link', help='Auto-link YouTube videos to kits')
     kit_link.add_argument('--video', '-v', dest='video_id', type=str, help='YouTube video ID')
     kit_link.add_argument('--kit', '-k', dest='kit_id', type=str, help='Kit ID (e.g., 003)')
+    kit_link.add_argument('--short', '-s', action='store_true', help='Link as Short (saves to video_id_short)')
+    
+    kit_enrich = kit_subparsers.add_parser('enrich', help='Use AI to extract DNA ingredients from prompts')
+    kit_enrich.add_argument('--kit', '-k', dest='kit_id', type=str, help='Specific kit ID to enrich')
+    kit_enrich.add_argument('--force', '-f', action='store_true', help='Re-analyze already enriched kits')
     
     kit_parser.set_defaults(func=kit_cmd.run)
 
@@ -217,7 +222,7 @@ def main() -> None:
         parser.print_help()
         print("\n📺 Quick Start:")
         print("   contentos channel list")
-        print("   contentos channel use rotnation")
+        print("   contentos channel use my_channel")
         print("   contentos kit create 'neon_jelly' --theme loop")
         sys.exit(0)
     

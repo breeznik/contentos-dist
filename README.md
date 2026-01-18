@@ -136,9 +136,14 @@ python contentos.py test-crew
 
 | Command | Uses LLM For |
 |---------|--------------|
+| `kit enrich` | Extracting DNA ingredients from prompts |
 | `scout --keyword` | Analyzing competitor videos |
 | `scan comments` | Map-reduce sentiment analysis |
 | `strategy suggest` | Content recommendations |
+
+### Ollama Auto-Start
+ContentOS v1.1+ automatically tries to start Ollama (`ollama serve`) when you run AI commands.
+- Disable this: `python contentos.py config disable ollama_autostart`
 
 ---
 
@@ -191,6 +196,8 @@ contentos/
 | `channel list/use/create` | Manage channels |
 | `brain show/set-theme/init` | Manage channel knowledge |
 | `kit create/list/publish` | Content production |
+| `kit enrich` | Extract ingredients from prompt |
+| `kit link` | Link YouTube videos/shorts |
 | `scout --keyword "x"` | Market research (needs Ollama) |
 | `scan comments` | Audience analysis (needs Ollama) |
 | `health` | System diagnostics |

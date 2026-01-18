@@ -13,14 +13,15 @@ CHANNELS_DIR = PROJECT_ROOT / "channels"
 @dataclass
 class FeaturesConfig:
     """Toggleable system modules for distribution."""
-    llm_swarm: bool = False   # Enable local/cloud LLM agents
-    scout_agent: bool = True  # Enable YouTube Data API research
-    cloud_sync: bool = False  # Enable remote database sync
+    llm_swarm: bool = False      # Enable local/cloud LLM agents
+    ollama_autostart: bool = True # Auto-start Ollama when needed
+    scout_agent: bool = True     # Enable YouTube Data API research
+    cloud_sync: bool = False     # Enable remote database sync
 
 @dataclass
 class GlobalConfig:
-    version: str = "1.0.0"
-    active_channel: str = "rotnation"
+    version: str = "1.1.0"
+    active_channel: str = "default"
     default_theme: str = "loop"
     auto_sync_on_publish: bool = True
     features: FeaturesConfig = field(default_factory=FeaturesConfig)
