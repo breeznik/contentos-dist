@@ -99,7 +99,7 @@ def list_production_kits(context) -> List[Dict]:
                             kit_data = yaml.safe_load(f) or {}
                             kit_status = kit_data.get('status', 'setup')
                             video_id = kit_data.get('video_id')
-                    except:
+                    except Exception:
                         pass
                 
                 has_script = (item / 'script.txt').exists()
@@ -111,7 +111,7 @@ def list_production_kits(context) -> List[Dict]:
                         with open(yaml_path, 'r', encoding='utf-8') as f:
                             kit_data_yaml = yaml.safe_load(f) or {}
                             formula_name = kit_data_yaml.get('ingredients', {}).get('formula', 'stitch_2clip')
-                    except:
+                    except Exception:
                         pass
 
                 f_config = FORMULAS.get(formula_name, FORMULAS['stitch_2clip'])
@@ -123,14 +123,14 @@ def list_production_kits(context) -> List[Dict]:
                         has_assets = True
                         break
                 
-                display_status = '🔧 Setup'
+                display_status = '[SETUP]'
                 if has_script and has_prompt and has_assets:
                     if video_id and video_id != 'TBD':
-                        display_status = '✅ Published'
+                        display_status = '[PUBLISHED]'
                     else:
-                        display_status = '⏳ Pending'
+                        display_status = '[PENDING]'
                 elif not has_script:
-                    display_status = '📦 Empty'
+                    display_status = '[EMPTY]'
                 
                 kits.append({
                     'id': match.group(1),

@@ -113,12 +113,24 @@ def main() -> None:
 
     # --- Sync Command ---
     sync_parser = subparsers.add_parser('sync', help='Sync analytics for active channel')
-    sync_parser.add_argument('--deep', action='store_true', help='Deep sync (50 videos)')
-    sync_parser.add_argument('--count', type=int, help='Specific number of videos to fetch')
-    sync_parser.add_argument('--auto-dna', '-a', action='store_true', 
-                            help='Auto-update viral_dna.md after sync')
-    sync_parser.add_argument('--all', dest='all_channels', action='store_true',
-                            help='Sync ALL channels sequentially')
+    sync_subparsers = sync_parser.add_subparsers(dest='sync_action')
+    
+    # sync run (default behavior)
+    sync_run = sync_subparsers.add_parser('run', help='Sync from YouTube API')
+    sync_run.add_argument('--deep', action='store_true', help='Deep sync (50 videos)')
+    sync_run.add_argument('--count', type=int, help='Specific number of videos to fetch')
+    sync_run.add_argument('--auto-dna', '-a', action='store_true', 
+                          help='Auto-update viral_dna.md after sync')
+    sync_run.add_argument('--all', dest='all_channels', action='store_true',
+                          help='Sync ALL channels sequentially')
+    
+    # sync import-studio (Phase 2 Analytics - Manual CSV)
+    sync_import = sync_subparsers.add_parser('import-studio', help='Import YouTube Studio CSV export')
+    sync_import.add_argument('csv_path', type=str, help='Path to YouTube Studio CSV file')
+    
+    # sync analytics (Phase 2 Analytics - Auto Fetch)
+    sync_analytics = sync_subparsers.add_parser('analytics', help='Auto-fetch CTR/impressions via Analytics API')
+    
     sync_parser.set_defaults(func=sync_cmd.run)
 
 
@@ -169,6 +181,10 @@ def main() -> None:
     kit_enrich.add_argument('--kit', '-k', dest='kit_id', type=str, help='Specific kit ID to enrich')
     kit_enrich.add_argument('--force', '-f', action='store_true', help='Re-analyze already enriched kits')
     
+    # Tier 3: Predictive Engine
+    kit_suggest = kit_subparsers.add_parser('suggest', help='Get kit suggestions based on performance data')
+    kit_suggest.add_argument('--predict', '-p', action='store_true', help='Show predicted success score for ingredient combos')
+    
     kit_parser.set_defaults(func=kit_cmd.run)
 
     # --- Strategy Command ---
@@ -199,9 +215,13 @@ def main() -> None:
     db_subparsers = db_parser.add_subparsers(dest='db_action')
     
     db_subparsers.add_parser('sync', help='Sync all projects to database')
-    db_subparsers.add_parser('analyze', help='Analyze ingredient performance')
+    
+    db_analyze = db_subparsers.add_parser('analyze', help='Analyze ingredient performance')
+    db_analyze.add_argument('--deep', action='store_true', help='Deep analysis with retention/watch time from video_metrics')
+    
     db_subparsers.add_parser('query', help='Query projects')
     db_subparsers.add_parser('export', help='Export to JSON for cloud sync')
+    db_subparsers.add_parser('combos', help='Find best ingredient combinations')
     
     db_parser.set_defaults(func=db_cmd.run)
 

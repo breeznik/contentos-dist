@@ -117,6 +117,25 @@ def init_db(context):
             detected_at TEXT
         )
     ''')
+
+    # ============ VIDEO METRICS (Phase 2 Analytics) ============
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS video_metrics (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            project_id TEXT,
+            snapshot_date TEXT,
+            views INTEGER,
+            likes INTEGER,
+            comments INTEGER,
+            impressions INTEGER,
+            ctr REAL,
+            avg_view_duration REAL,
+            avg_percentage_viewed REAL,
+            watch_time_hours REAL,
+            subscribers_gained INTEGER,
+            FOREIGN KEY (project_id) REFERENCES projects(id)
+        )
+    ''')
     
     conn.commit()
     conn.close()

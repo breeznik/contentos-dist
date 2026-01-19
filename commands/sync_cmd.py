@@ -72,6 +72,16 @@ def get_video_stats(youtube, playlist_id, max_results=10):
 def run(args):
     """Main entry point for sync command."""
     
+    # --- DISPATCH SUBCOMMANDS ---
+    sync_action = getattr(args, 'sync_action', None)
+    if sync_action == 'import-studio':
+        import_studio_csv(args)
+        return
+    if sync_action == 'analytics':
+        fetch_analytics_auto(args)
+        return
+    # If no action specified or action is 'run', continue with default sync
+    
     # --- GLOBAL SYNC LOGIC ---
     if hasattr(args, 'all_channels') and args.all_channels:
         print("GLOBAL SYNC INITIATED...")
@@ -241,3 +251,223 @@ def run(args):
     except Exception as e:
         print(f"[!] Error: {e}")
 
+
+def import_studio_csv(args):
+    """Import YouTube Studio CSV export into video_metrics table.
+    
+    Expected CSV columns (from YouTube Studio > Content export):
+    - Video, Video title, Video publish time, Views, Watch time (hours),
+    - Average view duration, Impressions, Impressions click-through rate (%),
+    - Subscribers, Comments, Likes
+    """
+    import csv
+    import sqlite3
+    from datetime import datetime
+    from core.database import get_db_path, init_db
+    
+    ctx = context_manager.get_current_context()
+    if not ctx:
+        print("[!] No active channel. Run: contentos channel use <name>")
+        return
+    
+    csv_path = Path(args.csv_path)
+    if not csv_path.exists():
+        print(f"[!] File not found: {csv_path}")
+        return
+    
+    print(f">> Importing YouTube Studio data from: {csv_path.name}")
+    
+    # Initialize DB (creates video_metrics table if missing)
+    init_db(ctx)
+    db_path = get_db_path(ctx)
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    
+    # Get existing video_id -> project_id mapping
+    cursor.execute("SELECT id, video_id FROM projects WHERE video_id IS NOT NULL")
+    video_map = {row[1]: row[0] for row in cursor.fetchall()}
+    
+    snapshot_date = datetime.now().strftime("%Y-%m-%d")
+    imported_count = 0
+    skipped_count = 0
+    
+    try:
+        with open(csv_path, 'r', encoding='utf-8-sig') as f:
+            reader = csv.DictReader(f)
+            
+            for row in reader:
+                # YouTube Studio CSV uses "Video" column for video ID
+                video_id = row.get('Video', '').strip()
+                
+                if not video_id or video_id not in video_map:
+                    skipped_count += 1
+                    continue
+                
+                project_id = video_map[video_id]
+                
+                # Parse metrics (handle various formats)
+                def parse_float(val):
+                    try:
+                        return float(val.replace(',', '').replace('%', '').strip())
+                    except:
+                        return None
+                
+                def parse_int(val):
+                    try:
+                        return int(val.replace(',', '').strip())
+                    except:
+                        return None
+                
+                views = parse_int(row.get('Views', '0'))
+                likes = parse_int(row.get('Likes', '0'))
+                comments = parse_int(row.get('Comments', '0'))
+                impressions = parse_int(row.get('Impressions', '0'))
+                ctr = parse_float(row.get('Impressions click-through rate (%)', '0'))
+                watch_time = parse_float(row.get('Watch time (hours)', '0'))
+                subscribers = parse_int(row.get('Subscribers', '0'))
+                
+                # Parse average view duration (format: "0:30" or "1:23:45")
+                avg_duration_str = row.get('Average view duration', '0:00')
+                try:
+                    parts = avg_duration_str.split(':')
+                    if len(parts) == 2:
+                        avg_duration = float(parts[0]) * 60 + float(parts[1])
+                    elif len(parts) == 3:
+                        avg_duration = float(parts[0]) * 3600 + float(parts[1]) * 60 + float(parts[2])
+                    else:
+                        avg_duration = 0
+                except:
+                    avg_duration = 0
+                
+                # Calculate avg_percentage_viewed (needs video duration - skip for now)
+                avg_percentage = None
+                
+                # Insert into video_metrics
+                cursor.execute('''
+                    INSERT INTO video_metrics (
+                        project_id, snapshot_date, views, likes, comments,
+                        impressions, ctr, avg_view_duration, avg_percentage_viewed,
+                        watch_time_hours, subscribers_gained
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (
+                    project_id, snapshot_date, views, likes, comments,
+                    impressions, ctr, avg_duration, avg_percentage,
+                    watch_time, subscribers
+                ))
+                
+                imported_count += 1
+                print(f"   ✓ {row.get('Video title', video_id)[:30]}... -> {views:,} views, {ctr:.1f}% CTR")
+        
+        conn.commit()
+        print(f"\n>> Imported {imported_count} videos, skipped {skipped_count} (not linked to kits)")
+        
+    except Exception as e:
+        print(f"[!] Error parsing CSV: {e}")
+    finally:
+        conn.close()
+
+
+def fetch_analytics_auto(args):
+    """Automatically fetch CTR, impressions, watch time via YouTube Analytics API.
+    
+    Uses the youtubeAnalytics.reports().query() endpoint to get detailed metrics
+    for all videos linked to kits.
+    """
+    import sqlite3
+    from datetime import datetime, timedelta
+    from core.database import get_db_path, init_db
+    from core.auth import get_analytics_for_channel
+    
+    ctx = context_manager.get_current_context()
+    if not ctx:
+        print("[!] No active channel. Run: contentos channel use <name>")
+        return
+    
+    print(f">> Fetching Analytics for {ctx.config.name}...")
+    
+    try:
+        analytics = get_analytics_for_channel(ctx)
+    except Exception as e:
+        print(f"[!] Analytics API auth failed: {e}")
+        print("   You may need to re-authenticate to grant Analytics access.")
+        print("   Delete your token.pickle and run 'contentos sync run' to re-auth.")
+        return
+    
+    # Initialize DB
+    init_db(ctx)
+    db_path = get_db_path(ctx)
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    
+    # Get all linked videos
+    cursor.execute("SELECT id, video_id, name FROM projects WHERE video_id IS NOT NULL")
+    videos = cursor.fetchall()
+    
+    if not videos:
+        print("[!] No videos linked to kits. Run 'contentos kit link' first.")
+        conn.close()
+        return
+    
+    print(f"   Found {len(videos)} linked videos")
+    
+    # Date range: last 28 days (YouTube Analytics standard)
+    end_date = datetime.now().strftime("%Y-%m-%d")
+    start_date = (datetime.now() - timedelta(days=28)).strftime("%Y-%m-%d")
+    snapshot_date = end_date
+    
+    fetched_count = 0
+    error_count = 0
+    
+    for project_id, video_id, name in videos:
+        try:
+            # Query Analytics API for this video
+            # Note: impressions/CTR not available at video level, using available metrics
+            response = analytics.reports().query(
+                ids="channel==MINE",
+                startDate=start_date,
+                endDate=end_date,
+                metrics="views,estimatedMinutesWatched,averageViewDuration,averageViewPercentage,subscribersGained,likes,comments",
+                dimensions="video",
+                filters=f"video=={video_id}"
+            ).execute()
+            
+            rows = response.get("rows", [])
+            if not rows:
+                print(f"   - {name[:25]}... (no data)")
+                continue
+            
+            # Parse the row (columns match metrics order)
+            row = rows[0]
+            vid_id = row[0]  # video dimension
+            views = int(row[1]) if row[1] else 0
+            watch_minutes = float(row[2]) if row[2] else 0
+            avg_duration = float(row[3]) if row[3] else 0
+            avg_percentage = float(row[4]) if row[4] else 0
+            subs_gained = int(row[5]) if row[5] else 0
+            likes = int(row[6]) if row[6] else 0
+            comments = int(row[7]) if row[7] else 0
+            
+            # Insert into video_metrics
+            cursor.execute('''
+                INSERT INTO video_metrics (
+                    project_id, snapshot_date, views, likes, comments,
+                    impressions, ctr, avg_view_duration, avg_percentage_viewed,
+                    watch_time_hours, subscribers_gained
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                project_id, snapshot_date, views, likes, comments,
+                None, None, avg_duration, avg_percentage,
+                watch_minutes / 60.0, subs_gained
+            ))
+            
+            fetched_count += 1
+            print(f"   [OK] {name[:25]}... -> {views:,} views, {avg_percentage:.1f}% retention")
+            
+        except Exception as e:
+            error_count += 1
+            print(f"   [ERR] {name[:25]}... Error: {str(e)[:40]}")
+    
+    conn.commit()
+    conn.close()
+    
+    print(f"\n>> Fetched analytics for {fetched_count} videos ({error_count} errors)")

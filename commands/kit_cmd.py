@@ -77,13 +77,29 @@ def cmd_create(args):
             brain_context = get_prompt_context(ctx, theme_override=args.theme)
             strategy_text += brain_context
             print(f"Injected Channel Brain context (Theme: {args.theme})")
-        else:
             # Fallback: Initialize brain if not exists
             print("Brain not found. Initializing...")
             init_brain(ctx)
             brain_context = get_prompt_context(ctx, theme_override=args.theme)
             strategy_text += brain_context
             print(f"Brain initialized and context injected.")
+
+        # --- LOAD CHANNEL PROTOCOLS ---
+        protocol_path = ctx.brain_path / "protocols.md"
+        if protocol_path.exists():
+            print(f"\n[!] CHANNEL PROTOCOL DETECTED: {protocol_path.name}")
+            try:
+                proto_content = protocol_path.read_text(encoding='utf-8')
+                strategy_text += "\n\n## CHANNEL PROTOCOLS\n" + proto_content + "\n"
+                
+                # Extract and print critical sections for the AI/User to see IMMEDIATELY
+                print("    > MANDATORY RULES:")
+                lines = proto_content.split('\n')
+                for line in lines:
+                    if "❌" in line or "✅" in line or "CRITICAL" in line:
+                        print(f"      {line.strip()}")
+            except Exception as e:
+                print(f"    Error reading protocol: {e}")
 
     print(f"Creating kit: {args.name} (Theme: {args.theme}, Formula: {args.formula})")
     try:
@@ -599,6 +615,97 @@ def _extract_patterns(prompt_content: str) -> dict:
         "clip_count": clip_count
     }
 
+def cmd_suggest(args):
+    """Get kit suggestions based on performance data."""
+    import sqlite3
+    from core.database import get_db_path, init_db
+    
+    ctx = context_manager.get_current_context()
+    if not ctx:
+        print("[!] No active channel.")
+        return
+    
+    init_db(ctx)
+    db_path = get_db_path(ctx)
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    
+    # Get baseline channel stats
+    cursor.execute('''
+        SELECT AVG(views_7d) as baseline FROM projects 
+        WHERE views_7d IS NOT NULL AND views_7d > 0
+    ''')
+    baseline = cursor.fetchone()['baseline'] or 100
+    
+    if getattr(args, 'predict', False):
+        print(">> PREDICTIVE ENGINE: Ingredient Scoring\n")
+        print(f"Channel Baseline: {baseline:.0f} avg views\n")
+        
+        # Calculate performance score for each ingredient
+        ingredient_scores = {}
+        for ing_type in ['hook_type', 'theme', 'audio_style', 'visual_style']:
+            cursor.execute(f'''
+                SELECT {ing_type} as ingredient, AVG(views_7d) as avg_views, COUNT(*) as count
+                FROM projects 
+                WHERE {ing_type} IS NOT NULL AND views_7d > 0
+                GROUP BY {ing_type}
+            ''')
+            for row in cursor.fetchall():
+                if row['ingredient']:
+                    score = (row['avg_views'] / baseline) * 100 if baseline > 0 else 0
+                    key = f"{ing_type}:{row['ingredient']}"
+                    ingredient_scores[key] = {
+                        'score': score,
+                        'views': row['avg_views'],
+                        'count': row['count']
+                    }
+        
+        # Sort and display top ingredients
+        sorted_scores = sorted(ingredient_scores.items(), key=lambda x: x[1]['score'], reverse=True)
+        
+        print(f"{'Ingredient':<35} {'Score':<10} {'Avg Views':<12} {'Videos':<8}")
+        print("-" * 70)
+        
+        for key, data in sorted_scores[:10]:
+            ing_type, ing_name = key.split(':')
+            score_display = f"{data['score']:.0f}%" if data['score'] <= 200 else f"{data['score']:.0f}%*"
+            print(f"{ing_name[:35]:<35} {score_display:<10} {data['views']:<12.0f} {data['count']:<8}")
+        
+        print("\n[LEGEND] Score = (Ingredient Avg Views / Channel Baseline) * 100")
+        print("         100% = average, >100% = above average, <100% = below average")
+        
+        # Generate top recommendation
+        if sorted_scores:
+            top = sorted_scores[0]
+            ing_type, ing_name = top[0].split(':')
+            print(f"\n[RECOMMENDED] Use '{ing_name}' ({ing_type}) for your next kit!")
+            print(f"              Predicted views: {top[1]['views']:.0f}")
+    else:
+        # Simple suggestion mode (no prediction)
+        print(">> KIT SUGGESTIONS\n")
+        print("Run with --predict to see ingredient scoring.")
+        print("\nQuick tips based on your data:")
+        
+        cursor.execute('''
+            SELECT theme, AVG(views_7d) as avg FROM projects 
+            WHERE views_7d > 0 GROUP BY theme ORDER BY avg DESC LIMIT 1
+        ''')
+        row = cursor.fetchone()
+        if row and row['theme']:
+            print(f"   - Best theme: {row['theme']} ({row['avg']:.0f} avg views)")
+        
+        cursor.execute('''
+            SELECT hook_type, AVG(views_7d) as avg FROM projects 
+            WHERE views_7d > 0 GROUP BY hook_type ORDER BY avg DESC LIMIT 1
+        ''')
+        row = cursor.fetchone()
+        if row and row['hook_type']:
+            print(f"   - Best hook: {row['hook_type']} ({row['avg']:.0f} avg views)")
+    
+    conn.close()
+
+
 def run(args):
     """Main entry point for kit command."""
     if args.kit_action == 'create':
@@ -611,5 +718,7 @@ def run(args):
         cmd_link(args)
     elif args.kit_action == 'enrich':
         cmd_enrich(args)
+    elif args.kit_action == 'suggest':
+        cmd_suggest(args)
     else:
-        print("Usage: contentos kit {create|list|publish|link|enrich}")
+        print("Usage: contentos kit {create|list|publish|link|enrich|suggest}")

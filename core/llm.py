@@ -23,7 +23,7 @@ def check_connection() -> bool:
     try:
         response = requests.get(f"{OLLAMA_HOST}/api/tags", timeout=2)
         return response.status_code == 200
-    except:
+    except (requests.RequestException, ConnectionError):
         return False
 
 def ensure_ollama_running() -> bool:
@@ -41,7 +41,7 @@ def ensure_ollama_running() -> bool:
         if not config.features.ollama_autostart:
             print("[!] Ollama not running (Auto-start DISABLED in config)")
             return False
-    except:
+    except Exception:
         # Fallback if config can't be read
         pass
     
@@ -83,7 +83,7 @@ def list_models() -> List[str]:
             data = response.json()
             return [m['name'] for m in data.get('models', [])]
         return []
-    except:
+    except (requests.RequestException, ConnectionError):
         return []
 
 def get_best_model(force_refresh=False) -> str:
@@ -123,7 +123,7 @@ def _ping_model(model_name: str) -> bool:
         }
         res = requests.post(url, json=payload, timeout=5)
         return res.status_code == 200
-    except:
+    except (requests.RequestException, ConnectionError):
         return False
 
 def ask(

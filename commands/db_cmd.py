@@ -242,15 +242,163 @@ def cmd_export(args):
     
     print(f">> Exported to {export_path}")
 
+
+def cmd_combos(args):
+    """Find best performing ingredient combinations."""
+    import sqlite3
+    from core.database import get_db_path
+    
+    ctx = context_manager.get_current_context()
+    if not ctx:
+        print("[!] No active channel.")
+        return
+    
+    init_db(ctx)
+    db_path = get_db_path(ctx)
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    
+    print(">> INGREDIENT COMBINATION ANALYSIS\n")
+    
+    # Query all projects with their ingredients and performance
+    cursor.execute('''
+        SELECT 
+            hook_type, theme, audio_style, visual_style,
+            views_7d, retention_avg, name
+        FROM projects 
+        WHERE views_7d IS NOT NULL AND views_7d > 0
+    ''')
+    
+    rows = cursor.fetchall()
+    if not rows:
+        print("[!] No performance data. Run 'contentos sync run' first.")
+        conn.close()
+        return
+    
+    # Group by combo signature
+    combos = {}
+    for row in rows:
+        sig = f"{row['hook_type']}|{row['theme']}|{row['audio_style']}"
+        if sig not in combos:
+            combos[sig] = {'views': [], 'count': 0, 'examples': []}
+        combos[sig]['views'].append(row['views_7d'] or 0)
+        combos[sig]['count'] += 1
+        combos[sig]['examples'].append(row['name'])
+    
+    # Calculate averages and sort
+    combo_stats = []
+    for sig, data in combos.items():
+        if data['count'] >= 1:  # At least 1 video
+            avg = sum(data['views']) / len(data['views'])
+            combo_stats.append({
+                'combo': sig.replace('|', ' + '),
+                'avg_views': avg,
+                'count': data['count'],
+                'example': data['examples'][0]
+            })
+    
+    combo_stats.sort(key=lambda x: x['avg_views'], reverse=True)
+    
+    print(f"{'Combo':<45} {'Videos':<8} {'Avg Views':<10}")
+    print("-" * 65)
+    
+    for cs in combo_stats[:10]:
+        print(f"{cs['combo'][:45]:<45} {cs['count']:<8} {cs['avg_views']:<10.0f}")
+    
+    if combo_stats:
+        best = combo_stats[0]
+        print(f"\n[RECOMMENDED] Best combo: {best['combo']}")
+        print(f"   Example: {best['example']}")
+    
+    conn.close()
+
+
 def run(args):
     """Main entry point for db command."""
     if args.db_action == 'sync':
         cmd_sync(args)
     elif args.db_action == 'analyze':
-        cmd_analyze(args)
+        # Check for --deep flag
+        if getattr(args, 'deep', False):
+            cmd_analyze_deep(args)
+        else:
+            cmd_analyze(args)
     elif args.db_action == 'query':
         cmd_query(args)
     elif args.db_action == 'export':
         cmd_export(args)
+    elif args.db_action == 'combos':
+        cmd_combos(args)
     else:
-        print("Usage: contentos db {sync|analyze|query|export}")
+        print("Usage: contentos db {sync|analyze|query|export|combos}")
+
+
+def cmd_analyze_deep(args):
+    """Deep analysis using video_metrics data (retention, watch time)."""
+    import sqlite3
+    from core.database import get_db_path
+    
+    ctx = context_manager.get_current_context()
+    if not ctx:
+        print("[!] No active channel.")
+        return
+    
+    init_db(ctx)
+    db_path = get_db_path(ctx)
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    
+    print(">> DEEP INGREDIENT ANALYSIS (with retention/watch time)\n")
+    
+    # Join projects with latest video_metrics
+    cursor.execute('''
+        SELECT 
+            p.hook_type, p.theme, p.audio_style, p.visual_style, p.physics_type,
+            p.views_7d, p.name,
+            vm.avg_view_duration, vm.avg_percentage_viewed, vm.watch_time_hours
+        FROM projects p
+        LEFT JOIN (
+            SELECT project_id, avg_view_duration, avg_percentage_viewed, watch_time_hours,
+                   MAX(snapshot_date) as latest
+            FROM video_metrics
+            GROUP BY project_id
+        ) vm ON p.id = vm.project_id
+        WHERE p.views_7d IS NOT NULL AND p.views_7d > 0
+    ''')
+    
+    rows = cursor.fetchall()
+    if not rows:
+        print("[!] No data. Run 'contentos sync analytics' first.")
+        conn.close()
+        return
+    
+    # Analyze by ingredient type
+    for ing_type in ['hook_type', 'theme', 'audio_style', 'visual_style']:
+        stats = {}
+        for row in rows:
+            ing = row[ing_type] or 'Unknown'
+            if ing not in stats:
+                stats[ing] = {'views': [], 'retention': [], 'watch': []}
+            stats[ing]['views'].append(row['views_7d'] or 0)
+            if row['avg_percentage_viewed']:
+                stats[ing]['retention'].append(row['avg_percentage_viewed'])
+            if row['watch_time_hours']:
+                stats[ing]['watch'].append(row['watch_time_hours'])
+        
+        print(f"\n### {ing_type.upper().replace('_', ' ')}")
+        print(f"{'Ingredient':<20} {'Videos':<8} {'Avg Views':<12} {'Retention%':<12} {'Watch Hrs':<10}")
+        print("-" * 65)
+        
+        sorted_stats = sorted(stats.items(), key=lambda x: sum(x[1]['views'])/len(x[1]['views']) if x[1]['views'] else 0, reverse=True)
+        
+        for ing, data in sorted_stats:
+            avg_views = sum(data['views'])/len(data['views']) if data['views'] else 0
+            avg_ret = sum(data['retention'])/len(data['retention']) if data['retention'] else 0
+            avg_watch = sum(data['watch'])/len(data['watch']) if data['watch'] else 0
+            count = len(data['views'])
+            print(f"{ing[:20]:<20} {count:<8} {avg_views:<12.0f} {avg_ret:<12.1f} {avg_watch:<10.2f}")
+    
+    conn.close()
+    print("\n[TIP] Use 'db combos' to find best ingredient combinations.")
