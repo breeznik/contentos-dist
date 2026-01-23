@@ -371,12 +371,12 @@ def fetch_analytics_auto(args):
     """Automatically fetch CTR, impressions, watch time via YouTube Analytics API.
     
     Uses the youtubeAnalytics.reports().query() endpoint to get detailed metrics
-    for all videos linked to kits.
+    for all videos linked to kits AND recent channel uploads.
     """
     import sqlite3
     from datetime import datetime, timedelta
     from core.database import get_db_path, init_db
-    from core.auth import get_analytics_for_channel
+    from core.auth import get_analytics_for_channel, get_youtube_for_channel
     
     ctx = context_manager.get_current_context()
     if not ctx:
@@ -385,32 +385,50 @@ def fetch_analytics_auto(args):
     
     print(f">> Fetching Analytics for {ctx.config.name}...")
     
+    # 1. Auth Services
     try:
         analytics = get_analytics_for_channel(ctx)
+        youtube = get_youtube_for_channel(ctx)
     except Exception as e:
-        print(f"[!] Analytics API auth failed: {e}")
-        print("   You may need to re-authenticate to grant Analytics access.")
-        print("   Delete your token.pickle and run 'contentos sync run' to re-auth.")
+        print(f"[!] API auth failed: {e}")
         return
     
-    # Initialize DB
+    # 2. Database Videos (Linked Kits)
     init_db(ctx)
     db_path = get_db_path(ctx)
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
     
-    # Get all linked videos
     cursor.execute("SELECT id, video_id, name FROM projects WHERE video_id IS NOT NULL")
-    videos = cursor.fetchall()
+    db_rows = cursor.fetchall()
     
-    if not videos:
-        print("[!] No videos linked to kits. Run 'contentos kit link' first.")
-        conn.close()
-        return
+    # Normalize DB videos -> {video_id: {data}}
+    target_videos = {}
+    for pid, vid, name in db_rows:
+        target_videos[vid] = {
+            "project_id": pid,
+            "name": name,
+            "source": "db"
+        }
+        
+    # 3. Channel Uploads (Recent)
+    # Fetch last 50 videos to ensure coverage of unlinked/manual uploads
+    print("   Fetching recent channel uploads...")
+    playlist_id = get_channel_uploads(youtube)
+    if playlist_id:
+        recent_videos = get_video_stats(youtube, playlist_id, max_results=50)
+        for v in recent_videos:
+            vid = v['id']
+            if vid not in target_videos:
+                target_videos[vid] = {
+                    "project_id": None,
+                    "name": v['title'],
+                    "source": "channel"
+                }
     
-    print(f"   Found {len(videos)} linked videos")
+    # 4. Query Analytics
+    print(f"   Analyzing {len(target_videos)} videos...")
     
-    # Date range: last 28 days (YouTube Analytics standard)
     end_date = datetime.now().strftime("%Y-%m-%d")
     start_date = (datetime.now() - timedelta(days=28)).strftime("%Y-%m-%d")
     snapshot_date = end_date
@@ -418,27 +436,30 @@ def fetch_analytics_auto(args):
     fetched_count = 0
     error_count = 0
     
-    for project_id, video_id, name in videos:
+    # Sort for consistent output (DB first, then recent)
+    sorted_vids = sorted(target_videos.items(), key=lambda x: (0 if x[1]['source']=='db' else 1))
+    
+    for vid_id, data in sorted_vids:
         try:
-            # Query Analytics API for this video
-            # Note: impressions/CTR not available at video level, using available metrics
+            name = data['name'][:30].replace("\n", " ").strip()
+            
             response = analytics.reports().query(
                 ids="channel==MINE",
                 startDate=start_date,
                 endDate=end_date,
                 metrics="views,estimatedMinutesWatched,averageViewDuration,averageViewPercentage,subscribersGained,likes,comments",
                 dimensions="video",
-                filters=f"video=={video_id}"
+                filters=f"video=={vid_id}"
             ).execute()
             
             rows = response.get("rows", [])
             if not rows:
-                print(f"   - {name[:25]}... (no data)")
+                if data['source'] == 'db':
+                    print(f"   - {name}... (no data)")
                 continue
             
-            # Parse the row (columns match metrics order)
             row = rows[0]
-            vid_id = row[0]  # video dimension
+            # [video, views, watch_min, avg_dur, avg_pct, subs, likes, comments]
             views = int(row[1]) if row[1] else 0
             watch_minutes = float(row[2]) if row[2] else 0
             avg_duration = float(row[3]) if row[3] else 0
@@ -447,25 +468,29 @@ def fetch_analytics_auto(args):
             likes = int(row[6]) if row[6] else 0
             comments = int(row[7]) if row[7] else 0
             
-            # Insert into video_metrics
-            cursor.execute('''
-                INSERT INTO video_metrics (
-                    project_id, snapshot_date, views, likes, comments,
-                    impressions, ctr, avg_view_duration, avg_percentage_viewed,
-                    watch_time_hours, subscribers_gained
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (
-                project_id, snapshot_date, views, likes, comments,
-                None, None, avg_duration, avg_percentage,
-                watch_minutes / 60.0, subs_gained
-            ))
+            # Store in DB if linked
+            if data['project_id']:
+                cursor.execute('''
+                    INSERT INTO video_metrics (
+                        project_id, snapshot_date, views, likes, comments,
+                        impressions, ctr, avg_view_duration, avg_percentage_viewed,
+                        watch_time_hours, subscribers_gained
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (
+                    data['project_id'], snapshot_date, views, likes, comments,
+                    None, None, avg_duration, avg_percentage,
+                    watch_minutes / 60.0, subs_gained
+                ))
             
             fetched_count += 1
-            print(f"   [OK] {name[:25]}... -> {views:,} views, {avg_percentage:.1f}% retention")
+            source_mark = "[OK]" if data['source'] == 'db' else "[EXT]"
+            print(f"   {source_mark} {name}... -> {views:,} views, {avg_percentage:.1f}% retention")
             
         except Exception as e:
             error_count += 1
-            print(f"   [ERR] {name[:25]}... Error: {str(e)[:40]}")
+            # Only complain loudly if it's a DB video we expect to work
+            if data['source'] == 'db':
+                print(f"   [ERR] {name}... Error: {str(e)[:40]}")
     
     conn.commit()
     conn.close()
